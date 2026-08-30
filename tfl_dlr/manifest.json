@@ -1,0 +1,5 @@
+{
+  "label": "TfL DLR",
+  "version": 1,
+  "files": ["renderer.py"]
+}
