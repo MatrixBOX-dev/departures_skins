@@ -132,6 +132,7 @@ def _draw_clock(y):
     _ensure_layers()
     tg, mask = _layers["clock_tg"], _layers["mask_tg"]
     tg.y = mask.y = y
+    tg.hidden = mask.hidden = False  # on_exit() hides these; undo that on return to this skin
     # _convert_date() (which sets _currenttime) only ever runs on a successful
     # fetch - while the API is blocked/erroring there may be no time yet, so
     # fall back to a placeholder rather than drawing (and caching) an empty
@@ -406,3 +407,14 @@ def refresh_settings():
 
 def on_enter():
     return render()
+
+
+def on_exit():
+    # ticker_tg/mask_tg/clock_tg live directly on varinit.group, outside the
+    # shared top/bottom/topbottom bitmaps every mode already clears on its
+    # own - without this they'd stay visible on top of whatever runs next.
+    for key in ("ticker_tg", "mask_tg", "clock_tg"):
+        tg = _layers.get(key)
+        if tg is not None:
+            tg.hidden = True
+    _ticker["phase"] = "idle"

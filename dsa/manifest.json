@@ -1,5 +1,1 @@
-{
-  "label": "DSA (Westfrankenbahn)",
-  "version": 1,
-  "files": ["renderer.py", "custom_font.json", "font_large.json", "font_small.json"]
-}
+{"label": "DSA (Westfrankenbahn)", "files": ["renderer.py", "custom_font.json", "font_large.json", "font_small.json"], "version": 1}
