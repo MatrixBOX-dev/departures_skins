@@ -1,12 +1,12 @@
 # departures_skins
-The idea is to host a collection of different "skins" for the Departures app. The skins mimic local transit organizations' legacy LED signs.
+This repository contains the "skins", i.e. custom styles, for the /departures app.
 
-So far, there are:
-- the classic SL (Storstockholms Lokaltrafik in Sweden) scroller
-- a generic list mod
-- a custom three-line version used by WFB and EGB (Westfrankenbahn, Erzgebirgsbahn in Germany)
+So far containing:
+- the classic SL scroll (Storstockholms Lokaltrafik in Sweden)
+- a generic list mode
+- DSA, a custom three-line version used by WFB and EGB (Westfrankenbahn, Erzgebirgsbahn in Germany)
 - DLR (Docklands Light Railway) within TfL (London, UK)
 
 To do:
-- come up with an idea how to make the skins selectable from the UI, and
-- how to manage font and display exchange in an efficient way
+- clean up the UI
+- solve DSA-specific issues (fetching data from data.t-skylt.se rather than scraping unofficial APIs)
