@@ -84,33 +84,70 @@ def _draw(text, x, y, font_index=1):
     return w
 
 
+_layers = {"ticker_tg": None, "mask_tg": None, "clock_tg": None, "clock_last": None}
+
+
+def _ensure_layers():
+    # Three separate TileGrids, appended in this exact order so z-order comes
+    # out right: scrolling ticker text (bottom), an opaque mask the same size
+    # as the clock (middle - blocks the ticker's own transparent gaps from
+    # showing the layer below it), then the clock itself (top, always clean).
+    # Mirrors the original DSA fork's cancel_scroll_tg/cancel_mask_tg/
+    # cancel_clock_tg trio, at the same y=24 row.
+    if _layers["ticker_tg"] is not None:
+        return
+    height = fonts[_DSA_SMALL_INDEX]["fontheight"]
+
+    ticker_palette = displayio.Palette(2)
+    ticker_palette[0] = 0x000000
+    ticker_palette[1] = varinit.palette[1]
+    ticker_palette.make_transparent(0)
+    ticker_bmp = displayio.Bitmap(max(500, varinit.if_long * 6), height, 2)
+    ticker_tg = displayio.TileGrid(ticker_bmp, pixel_shader=ticker_palette, x=varinit.if_long, y=24)
+    ticker_tg.hidden = True
+    varinit.group.append(ticker_tg)
+
+    mask_w = 35
+    mask_palette = displayio.Palette(2)
+    mask_palette[0] = 0x000000
+    mask_palette[1] = 0x000000
+    mask_bmp = displayio.Bitmap(mask_w, height, 2)
+    mask_tg = displayio.TileGrid(mask_bmp, pixel_shader=mask_palette, x=max(0, varinit.if_long - mask_w), y=24)
+    varinit.group.append(mask_tg)
+
+    clock_palette = displayio.Palette(2)
+    clock_palette[0] = 0x000000
+    clock_palette[1] = varinit.palette[1]
+    clock_palette.make_transparent(0)
+    clock_bmp = displayio.Bitmap(mask_w, height, 2)
+    clock_tg = displayio.TileGrid(clock_bmp, pixel_shader=clock_palette, x=max(0, varinit.if_long - mask_w), y=24)
+    varinit.group.append(clock_tg)
+
+    _layers["ticker_tg"] = ticker_tg
+    _layers["mask_tg"] = mask_tg
+    _layers["clock_tg"] = clock_tg
+
+
 def _draw_clock(y):
-    _draw("\u00b0" + str(getattr(varinit, "_currenttime", "")), max(0, varinit.if_long - 35), y, _DSA_SMALL_INDEX)
+    _ensure_layers()
+    tg, mask = _layers["clock_tg"], _layers["mask_tg"]
+    tg.y = mask.y = y
+    # _convert_date() (which sets _currenttime) only ever runs on a successful
+    # fetch - while the API is blocked/erroring there may be no time yet, so
+    # fall back to a placeholder rather than drawing (and caching) an empty
+    # string, which would make the clock silently vanish.
+    text = "\u00b0" + (str(getattr(varinit, "_currenttime", "")) or "--:--")
+    if text == _layers["clock_last"]:
+        return
+    _layers["clock_last"] = text
+    tg.bitmap.fill(0)
+    before = varinit.currentfont
+    varinit.currentfont = _DSA_SMALL_INDEX
+    renderstring(text, target_bmp=tg.bitmap, target_offs=0, start_x=0)
+    varinit.currentfont = before
 
 
 _ticker = {"message": "", "phase": "idle", "width": 0, "last": 0.0}
-_ticker_tg = None
-
-
-def _ensure_ticker_tg():
-    # Own bitmap/palette/TileGrid (not topbottom) at y=24, matching where the
-    # original DSA fork's cancel-scroll ticker lives - and critically, lets
-    # scrolling be a cheap TileGrid.x shift instead of a full text redraw
-    # every tick (redrawing ~90 characters per tick was the actual cause of
-    # the "takes forever" slowness, not a sleep() anywhere).
-    global _ticker_tg
-    if _ticker_tg is not None:
-        return _ticker_tg
-    palette = displayio.Palette(2)
-    palette[0] = 0x000000
-    palette[1] = varinit.palette[1]
-    palette.make_transparent(0)
-    height = fonts[_DSA_SMALL_INDEX]["fontheight"]
-    bmp = displayio.Bitmap(max(500, varinit.if_long * 6), height, 2)
-    _ticker_tg = displayio.TileGrid(bmp, pixel_shader=palette, x=varinit.if_long, y=24)
-    _ticker_tg.hidden = True
-    varinit.group.append(_ticker_tg)
-    return _ticker_tg
 
 
 def _queue_ticker(msg):
@@ -125,7 +162,8 @@ def message_active():
 
 
 def _ticker_tick():
-    tg = _ensure_ticker_tg()
+    _ensure_layers()
+    tg = _layers["ticker_tg"]
     now = time.monotonic()
     if _ticker["phase"] == "pending":
         tg.bitmap.fill(0)
@@ -184,56 +222,31 @@ def _get_api_request(station_id, api_provider):
     return ("", "")
 
 
-def _urlencode(s):
-    out = []
-    for b in str(s).encode("utf-8"):
-        if (48 <= b <= 57) or (65 <= b <= 90) or (97 <= b <= 122) or chr(b) in "-_.~":
-            out.append(chr(b))
-        else:
-            out.append("%{:02X}".format(b))
-    return "".join(out)
-
-
 def search_station(query):
-    """Search Bahn.de/VVO stop names (not data.t-skylt.se) for the host's
-    search UI. Returns the same <option> HTML shape the host's own /search
-    route builds, and populates varinit.datadict[id]=name the same way, so
-    selecting a result reuses the host's existing newstation handler as-is."""
+    """Search German stops via the host's own data.t-skylt.se /search_stop proxy
+    (country=de, operator=vvo or db_trains depending on the active API provider)
+    rather than hitting bahn.de/efa.vvo-online.de directly - "db" looked plausible
+    but actually returns an unscoped nationwide GTFS substring match; db_trains is
+    the real Bahn.de operator code (confirmed against both the live endpoint and
+    the host's own country_and_operators registry in web.py).
+    Returns the same <option> HTML shape host's own /search route builds, and
+    populates varinit.datadict[id]=name the same way, so selecting a result
+    reuses the host's existing newstation handler as-is."""
     api_provider = int(varinit.settings.get("dsa_api_provider", 1))
-    q = _urlencode(query)
-    results = []
+    operator = "vvo" if api_provider == 3 else "db_trains"
+    datastr = '<option value="0">Search...</option>'
     try:
-        if api_provider == 3:
-            url = ("https://efa.vvo-online.de/VMSSL3/XSLT_STOPFINDER_REQUEST?outputFormat=json"
-                   "&type_sf=any&coordOutputFormat=WGS84&name_sf=" + q)
-            resp = requests.get(url, timeout=10)
-            data = json.loads(resp.text)
-            resp.close()
-            points = data.get("stopFinder", {}).get("points", [])
-            if isinstance(points, dict): points = [points]
-            for p in points if isinstance(points, list) else []:
-                if not isinstance(p, dict): continue
-                gid = p.get("ref", {}).get("gid")
-                name = p.get("name")
-                if gid and name: results.append((str(gid), str(name)))
-        else:
-            url = "https://www.bahn.de/web/api/reiseloesung/orte?typ=ALL&limit=10&suchbegriff=" + q
-            resp = requests.get(url, timeout=10)
-            data = json.loads(resp.text)
-            resp.close()
-            for p in data if isinstance(data, list) else []:
-                if not isinstance(p, dict): continue
-                ext_id = p.get("extId")
-                name = p.get("name")
-                if ext_id and name: results.append((str(ext_id), str(name)))
+        from functions import fetch_data
+        raw = fetch_data("data.t-skylt.se", 90, "/search_stop?country=de&operator=" + operator + "&station=" + query)
+        data = json.loads(raw)
+        for name, sid in sorted(((n, data[n]) for n in data), key=lambda p: p[0]):
+            name, sid = str(name), str(sid)
+            varinit.datadict[sid] = name
+            datastr += '<option value="' + sid + '">' + name + '</option>'
     except Exception as e:
         print("DSA: search error:", repr(e))
-
-    datastr = '<option value="0">Search...</option>'
-    for sid, name in results:
-        varinit.datadict[sid] = name
-        datastr += '<option value="' + sid + '">' + name + '</option>'
     return datastr
+
 
 
 def _fetch_departures(num="1"):
