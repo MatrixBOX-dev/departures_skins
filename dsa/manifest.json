@@ -1,0 +1,5 @@
+{
+  "label": "DSA (Westfrankenbahn)",
+  "version": 1,
+  "files": ["renderer.py", "custom_font.json"]
+}
