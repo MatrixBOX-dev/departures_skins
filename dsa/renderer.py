@@ -26,13 +26,13 @@ Contract expected by /departures' skin loader:
     message_active()   - True while a secondary animation is mid-flight
     refresh_settings() - called after a relevant web-settings change
 
-Not yet ported: the original app's scrolling cancellation/disruption
-ticker. Cancelled departures are shown inline (time text gets a "^"
-suffix) rather than as a scrolling banner - add the ticker later using
-the same varinit.tg2-hijack technique the tfl_dlr skin uses for its
-message scroll, once this base version is confirmed working on hardware.
+API-blocked/connection-error notices scroll across row 2 (with the clock
+still visible on row 3) via a small state machine in animate_tick(), drawn
+directly onto the topbottom canvas - not a TileGrid-hijack like tfl_dlr's,
+since this skin only ever uses the single topbottom canvas to begin with.
 """
 import time, json
+import displayio
 import varinit, dicts
 from __main__ import requests
 from functions import cls, refresh, renderstring
@@ -47,6 +47,24 @@ try:
 except Exception as e:
     print("DSA: custom font load failed, falling back to small font:", e)
     _DSA_FONT_INDEX = 1
+
+# DSA's own large/small fonts (ported from font_large.py/font_small.py in the
+# original app) - these carry German umlauts, en-dash, and (font_small only)
+# the degree glyph the host's shared fonts don't have.
+try:
+    with open("skins/dsa/font_large.json") as f:
+        fonts.append(json.load(f))
+    _DSA_LARGE_INDEX = len(fonts) - 1
+except Exception as e:
+    print("DSA: font_large load failed, falling back to host large font:", e)
+    _DSA_LARGE_INDEX = 0
+try:
+    with open("skins/dsa/font_small.json") as f:
+        fonts.append(json.load(f))
+    _DSA_SMALL_INDEX = len(fonts) - 1
+except Exception as e:
+    print("DSA: font_small load failed, falling back to host small font:", e)
+    _DSA_SMALL_INDEX = 1
 
 
 def _width(text, font_index):
@@ -67,9 +85,68 @@ def _draw(text, x, y, font_index=1):
 
 
 def _draw_clock(y):
-    # no font currently loaded has a degree-symbol glyph (not even custom_font.json -
-    # it's digits/A-Z/space/"|" only), so the clock is shown plain, without one.
-    _draw(str(getattr(varinit, "_currenttime", "")), max(0, varinit.if_long - 35), y, 1)
+    _draw("\u00b0" + str(getattr(varinit, "_currenttime", "")), max(0, varinit.if_long - 35), y, _DSA_SMALL_INDEX)
+
+
+_ticker = {"message": "", "phase": "idle", "width": 0, "last": 0.0}
+_ticker_tg = None
+
+
+def _ensure_ticker_tg():
+    # Own bitmap/palette/TileGrid (not topbottom) at y=24, matching where the
+    # original DSA fork's cancel-scroll ticker lives - and critically, lets
+    # scrolling be a cheap TileGrid.x shift instead of a full text redraw
+    # every tick (redrawing ~90 characters per tick was the actual cause of
+    # the "takes forever" slowness, not a sleep() anywhere).
+    global _ticker_tg
+    if _ticker_tg is not None:
+        return _ticker_tg
+    palette = displayio.Palette(2)
+    palette[0] = 0x000000
+    palette[1] = varinit.palette[1]
+    palette.make_transparent(0)
+    height = fonts[_DSA_SMALL_INDEX]["fontheight"]
+    bmp = displayio.Bitmap(max(500, varinit.if_long * 6), height, 2)
+    _ticker_tg = displayio.TileGrid(bmp, pixel_shader=palette, x=varinit.if_long, y=24)
+    _ticker_tg.hidden = True
+    varinit.group.append(_ticker_tg)
+    return _ticker_tg
+
+
+def _queue_ticker(msg):
+    if _ticker["phase"] != "idle" and _ticker["message"] == msg:
+        return  # already showing/about to show this exact notice
+    _ticker["message"] = msg
+    _ticker["phase"] = "pending"
+
+
+def message_active():
+    return _ticker["phase"] != "idle"
+
+
+def _ticker_tick():
+    tg = _ensure_ticker_tg()
+    now = time.monotonic()
+    if _ticker["phase"] == "pending":
+        tg.bitmap.fill(0)
+        before = varinit.currentfont
+        varinit.currentfont = _DSA_SMALL_INDEX
+        _ticker["width"] = renderstring(_ticker["message"], target_bmp=tg.bitmap, target_offs=0, start_x=0)
+        varinit.currentfont = before
+        tg.x = varinit.if_long
+        tg.hidden = False
+        _ticker["phase"] = "scroll"
+        _ticker["last"] = now
+        return True
+    if now - _ticker["last"] < 0.03:
+        return True
+    _ticker["last"] = now
+    tg.x -= 1
+    refresh(1)
+    if tg.x < -_ticker["width"]:
+        tg.hidden = True
+        _ticker["phase"] = "idle"
+    return True
 
 
 def _convert_date(dt):
@@ -107,6 +184,58 @@ def _get_api_request(station_id, api_provider):
     return ("", "")
 
 
+def _urlencode(s):
+    out = []
+    for b in str(s).encode("utf-8"):
+        if (48 <= b <= 57) or (65 <= b <= 90) or (97 <= b <= 122) or chr(b) in "-_.~":
+            out.append(chr(b))
+        else:
+            out.append("%{:02X}".format(b))
+    return "".join(out)
+
+
+def search_station(query):
+    """Search Bahn.de/VVO stop names (not data.t-skylt.se) for the host's
+    search UI. Returns the same <option> HTML shape the host's own /search
+    route builds, and populates varinit.datadict[id]=name the same way, so
+    selecting a result reuses the host's existing newstation handler as-is."""
+    api_provider = int(varinit.settings.get("dsa_api_provider", 1))
+    q = _urlencode(query)
+    results = []
+    try:
+        if api_provider == 3:
+            url = ("https://efa.vvo-online.de/VMSSL3/XSLT_STOPFINDER_REQUEST?outputFormat=json"
+                   "&type_sf=any&coordOutputFormat=WGS84&name_sf=" + q)
+            resp = requests.get(url, timeout=10)
+            data = json.loads(resp.text)
+            resp.close()
+            points = data.get("stopFinder", {}).get("points", [])
+            if isinstance(points, dict): points = [points]
+            for p in points if isinstance(points, list) else []:
+                if not isinstance(p, dict): continue
+                gid = p.get("ref", {}).get("gid")
+                name = p.get("name")
+                if gid and name: results.append((str(gid), str(name)))
+        else:
+            url = "https://www.bahn.de/web/api/reiseloesung/orte?typ=ALL&limit=10&suchbegriff=" + q
+            resp = requests.get(url, timeout=10)
+            data = json.loads(resp.text)
+            resp.close()
+            for p in data if isinstance(data, list) else []:
+                if not isinstance(p, dict): continue
+                ext_id = p.get("extId")
+                name = p.get("name")
+                if ext_id and name: results.append((str(ext_id), str(name)))
+    except Exception as e:
+        print("DSA: search error:", repr(e))
+
+    datastr = '<option value="0">Search...</option>'
+    for sid, name in results:
+        varinit.datadict[sid] = name
+        datastr += '<option value="' + sid + '">' + name + '</option>'
+    return datastr
+
+
 def _fetch_departures(num="1"):
     stn = varinit.settings["stations"][num]
     station_id = stn.get("siteid") or "de:14522:70048"
@@ -121,7 +250,9 @@ def _fetch_departures(num="1"):
         if resp.status_code != 200:
             print("DSA: non-200 body:", resp.text[:200])
             resp.close()
-            return [["0", "", "HTTP " + str(resp.status_code), "--:--", "", ""]]
+            _queue_ticker("DSA: API blocked or unavailable (HTTP " + str(resp.status_code)
+                          + ", provider " + str(api_provider) + ") - try another provider.")
+            return []
         try: _convert_date(resp.headers["date"])
         except Exception: pass
         raw = resp.text
@@ -130,7 +261,8 @@ def _fetch_departures(num="1"):
         resp.close()
     except Exception as e:
         print("DSA: fetch error:", repr(e))
-        return [["0", "", "Verbindungsfehler", "--:--", "", ""]]
+        _queue_ticker("DSA: connection error (" + repr(e) + ")")
+        return []
 
     if api_provider == 3:
         dep_list = data.get("departureList", {})
@@ -211,18 +343,18 @@ def _draw_row(row, top_row):
 
     line_width = _width(line_text, _DSA_FONT_INDEX)
     x_dest = 48 + line_width + (2 if line_width else 0)
-    platform_width = _width(platform_text, 0)
+    platform_width = _width(platform_text, _DSA_LARGE_INDEX)
     x_platform = max(0, varinit.if_long - platform_width)
 
     if layout == 1:
         _draw(line_text, 50, y + 3, _DSA_FONT_INDEX)
-        _draw(delay_text, 30, y + 2, 1)
-    _draw(time_text, -1, y, 0)
+        _draw(delay_text, 30, y + 2, _DSA_SMALL_INDEX)
+    _draw(time_text, -1, y, _DSA_LARGE_INDEX)
     if layout == 1:
-        _draw(dest_text, x_dest + 1, y, 0)
+        _draw(dest_text, x_dest + 1, y, _DSA_LARGE_INDEX)
     else:
-        _draw(dest_text, _width(time_text, 0) + 2, y + 2, 1)
-    _draw(platform_text, x_platform, y, 0)
+        _draw(dest_text, _width(time_text, _DSA_LARGE_INDEX) + 2, y + 2, _DSA_SMALL_INDEX)
+    _draw(platform_text, x_platform, y, _DSA_LARGE_INDEX)
     if not top_row:
         _draw_clock(24)
 
@@ -236,7 +368,8 @@ def render():
     cls(topbottom)
     rows = _fetch_departures("1")
     if not rows:
-        _draw_clock(12)
+        if _ticker["phase"] == "idle":
+            _draw_clock(12)
         refresh()
         return time.monotonic()
     _draw_row(rows[0], top_row=True)
@@ -249,11 +382,9 @@ def render():
 
 
 def animate_tick():
-    return False  # no secondary animation yet - see module docstring
-
-
-def message_active():
-    return False
+    if _ticker["phase"] == "idle":
+        return False
+    return _ticker_tick()
 
 
 def refresh_settings():
