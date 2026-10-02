@@ -49,10 +49,16 @@ except Exception as e:
     print("VBZ: font load failed, falling back to host small font:", e)
     _VBZ_FONT_INDEX = 1
 
-# vbz_font's own canvas height (11px) plus a 2px gap between rows.
-_ROW_PITCH = 13
+# vbz_font's own canvas height (12px) plus a 2px gap between rows.
+_ROW_PITCH = 14
 _BADGE_X = 1   # badge TileGrid's own x offset
-_BADGE_W = 20  # bitmap pixel width reserved per line-number badge
+_BADGE_W = 22  # badge pixel width: worst-case 3-digit line ID (e.g. "999") measures 21px
+               # with this font (all digits except "1" are 7px wide) - 20px left zero/negative
+               # room for the intended 1px right margin, making wide IDs look flush/overflowing
+               # while short ones (e.g. "S2") had visibly more space; 22px fits the real worst case
+_BADGE_H = 11  # line IDs are digits/letters, whose glyphs all end at row 9 (yOffset=1,
+               # height=9 in the source font); the reference VBZ display's own box extends
+               # 1px past that floor (row 10), so this matches rather than cropping flush to it
 _DEST_GAP = 4  # px between the badge's right edge and the destination text
 
 _badges = []  # one dedicated TileGrid per row slot, created lazily (needs if_tall)
@@ -65,12 +71,11 @@ def _max_rows():
 def _ensure_badges():
     if _badges:
         return
-    h = varinit.fonts[_VBZ_FONT_INDEX]["fontheight"]
     for i in range(_max_rows()):
         palette = displayio.Palette(2)
         palette[0] = (40, 40, 40)
         palette[1] = (255, 255, 255)
-        bmp = displayio.Bitmap(_BADGE_W, h, 2)
+        bmp = displayio.Bitmap(_BADGE_W, _BADGE_H, 2)
         tg = displayio.TileGrid(bmp, pixel_shader=palette, x=_BADGE_X, y=i * _ROW_PITCH)
         tg.hidden = True
         varinit.group.append(tg)
@@ -102,8 +107,10 @@ def _host_white():
 
 def _finish_color(bg, fg):
     bg = bg or (40, 40, 40)
-    if _luminance(bg) > 170:
-        fg = (0, 0, 0)  # bright box background -> force black line ID text
+    r, g, b = bg
+    is_red = r > 140 and g < 100 and b < 100  # vivid red boxes read better with black text too
+    if _luminance(bg) > 170 or is_red:
+        fg = (0, 0, 0)  # bright or red box background -> force black line ID text
     else:
         fg = fg or (255, 255, 255)
         if fg == (255, 255, 255): fg = _host_white()

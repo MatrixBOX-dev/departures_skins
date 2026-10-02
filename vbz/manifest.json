@@ -1,5 +1,1 @@
-{
-  "label": "VBZ (Zürich)",
-  "version": 1,
-  "files": ["renderer.py", "vbz_font.json"]
-}
+{"label": "VBZ (Zürich)", "files": ["renderer.py", "vbz_font.json"], "version": 1}
