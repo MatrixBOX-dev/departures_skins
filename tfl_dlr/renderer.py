@@ -251,8 +251,10 @@ def render():
     except:
         reset_dlr_message_cycle()
 
-    # DLR physically has three departure rows.
-    varinit.settings["maxdest"] = 3
+    # Keep the original three-row layout on 32px displays; use the lower
+    # 32px panel for four additional compact rows on 64px displays.
+    _tall_layout = varinit.if_tall >= 64
+    varinit.settings["maxdest"] = 7 if _tall_layout else 3
     nightcheck()
     varinit.currentfont = 0
 
@@ -263,12 +265,13 @@ def render():
         reset()
 
     trainlist = reformat_data(get_departure())
+    cls(topbottom)
     if not isinstance(trainlist, list) or not trainlist:
         cls(top)
         cls(bottom, _refresh=True)
         return time.monotonic()
 
-    rows = [row[:] for row in trainlist[:3] if isinstance(row, list) and len(row) >= 4]
+    rows = [row[:] for row in trainlist if isinstance(row, list) and len(row) >= 4]
     cls(top)
     cls(bottom)
 
@@ -382,6 +385,9 @@ def render():
         _draw_row(rows[1], 2, bottom, 0, 1)
     if len(rows) > 2:
         _draw_row(rows[2], 3, bottom, 8, 1)
+    if _tall_layout:
+        for _i, _row in enumerate(rows[3:7]):
+            _draw_row(_row, _i + 4, topbottom, _i * 8, 1)
 
     if _show_dlr_clock:
         renderstring(_dlr_clock, 0, large=True, target_bmp=bottom, target_offs=3,

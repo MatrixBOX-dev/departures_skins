@@ -87,13 +87,17 @@ def _draw(text, x, y, font_index=1):
 _layers = {"ticker_tg": None, "mask_tg": None, "clock_tg": None, "clock_last": None}
 
 
+def _clock_y():
+    return 24 if varinit.if_tall <= 32 else varinit.if_tall - 12
+
+
 def _ensure_layers():
     # Three separate TileGrids, appended in this exact order so z-order comes
     # out right: scrolling ticker text (bottom), an opaque mask the same size
     # as the clock (middle - blocks the ticker's own transparent gaps from
     # showing the layer below it), then the clock itself (top, always clean).
     # Mirrors the original DSA fork's cancel_scroll_tg/cancel_mask_tg/
-    # cancel_clock_tg trio, at the same y=24 row.
+    # cancel_clock_tg trio, at the clock/ticker row.
     if _layers["ticker_tg"] is not None:
         return
     height = fonts[_DSA_SMALL_INDEX]["fontheight"]
@@ -103,7 +107,7 @@ def _ensure_layers():
     ticker_palette[1] = varinit.palette[1]
     ticker_palette.make_transparent(0)
     ticker_bmp = displayio.Bitmap(max(500, varinit.if_long * 6), height, 2)
-    ticker_tg = displayio.TileGrid(ticker_bmp, pixel_shader=ticker_palette, x=varinit.if_long, y=24)
+    ticker_tg = displayio.TileGrid(ticker_bmp, pixel_shader=ticker_palette, x=varinit.if_long, y=_clock_y())
     ticker_tg.hidden = True
     varinit.group.append(ticker_tg)
 
@@ -112,7 +116,7 @@ def _ensure_layers():
     mask_palette[0] = 0x000000
     mask_palette[1] = 0x000000
     mask_bmp = displayio.Bitmap(mask_w, height, 2)
-    mask_tg = displayio.TileGrid(mask_bmp, pixel_shader=mask_palette, x=max(0, varinit.if_long - mask_w), y=24)
+    mask_tg = displayio.TileGrid(mask_bmp, pixel_shader=mask_palette, x=max(0, varinit.if_long - mask_w), y=_clock_y())
     varinit.group.append(mask_tg)
 
     clock_palette = displayio.Palette(2)
@@ -120,7 +124,7 @@ def _ensure_layers():
     clock_palette[1] = varinit.palette[1]
     clock_palette.make_transparent(0)
     clock_bmp = displayio.Bitmap(mask_w, height, 2)
-    clock_tg = displayio.TileGrid(clock_bmp, pixel_shader=clock_palette, x=max(0, varinit.if_long - mask_w), y=24)
+    clock_tg = displayio.TileGrid(clock_bmp, pixel_shader=clock_palette, x=max(0, varinit.if_long - mask_w), y=_clock_y())
     varinit.group.append(clock_tg)
 
     _layers["ticker_tg"] = ticker_tg
@@ -346,14 +350,14 @@ def _fetch_departures(num="1"):
     return rows
 
 
-def _draw_row(row, top_row):
+def _draw_row(row, row_index):
     layout = int(varinit.settings.get("dsa_layout", 1))
     line_text = str(row[1]).upper()[:varinit.settings["line_length"] or 8]
     dest_text, time_text, delay_text = row[2], row[3], row[4]
     platform_text = row[5] if len(row) > 5 else ""
     if not int(varinit.settings["clocktime"]) and not time_text.endswith(varinit.settings["mins"]):
         time_text += varinit.settings["mins"]
-    y = 0 if top_row else 12
+    y = row_index * 12
 
     line_width = _width(line_text, _DSA_FONT_INDEX)
     x_dest = 48 + line_width + (2 if line_width else 0)
@@ -369,8 +373,6 @@ def _draw_row(row, top_row):
     else:
         _draw(dest_text, _width(time_text, _DSA_LARGE_INDEX) + 2, y + 2, _DSA_SMALL_INDEX)
     _draw(platform_text, x_platform, y, _DSA_LARGE_INDEX)
-    if not top_row:
-        _draw_clock(24)
 
 
 def render():
@@ -383,14 +385,13 @@ def render():
     rows = _fetch_departures("1")
     if not rows:
         if _ticker["phase"] == "idle":
-            _draw_clock(12)
+            _draw_clock(_clock_y())
         refresh()
         return time.monotonic()
-    _draw_row(rows[0], top_row=True)
-    if len(rows) > 1:
-        _draw_row(rows[1], top_row=False)
-    else:
-        _draw_clock(24)
+    _max_rows = 2 if varinit.if_tall <= 32 else varinit.if_tall // 16
+    for _i, _row in enumerate(rows[:_max_rows]):
+        _draw_row(_row, _i)
+    _draw_clock(_clock_y())
     refresh()
     return time.monotonic()
 
