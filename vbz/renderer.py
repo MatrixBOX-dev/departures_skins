@@ -113,8 +113,12 @@ def _host_white():
 _FLOOR = 15   # min output for non-zero channels
 _CEIL  = 90   # max output (what a full 255 becomes)
 
+
 def _finish_color(bg, fg):
     bg = bg or (25, 25, 25)
+    orig = bg
+    r, g, b = orig
+    is_red = r > 140 and g < 100 and b < 100
 
     span = _CEIL - _FLOOR
 
@@ -125,12 +129,14 @@ def _finish_color(bg, fg):
 
     bg = (_dim_channel(bg[0]), _dim_channel(bg[1]), _dim_channel(bg[2]))
 
-    # backgrounds are always dim now, so text is always light - no black-text case
-    fg = fg or (255, 255, 255)
-    if fg == (255, 255, 255):
-        fg = _host_white()
+    if is_red:
+        fg = (0, 0, 0)
     else:
-        fg = (_dim_channel(fg[0]), _dim_channel(fg[1]), _dim_channel(fg[2]))
+        fg = fg or (255, 255, 255)
+        if fg == (255, 255, 255):
+            fg = _host_white()
+        else:
+            fg = (_dim_channel(fg[0]), _dim_channel(fg[1]), _dim_channel(fg[2]))
     return bg, fg
 
 def _parse_color(raw):
