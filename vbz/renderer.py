@@ -49,8 +49,6 @@ except Exception as e:
     print("VBZ: font load failed, falling back to host small font:", e)
     _VBZ_FONT_INDEX = 1
 
-# vbz_font's own canvas height (12px) plus a 2px gap between rows.
-_ROW_PITCH = 14
 _BADGE_X = 1   # badge TileGrid's own x offset
 _BADGE_W = 22  # badge pixel width: worst-case 3-digit line ID (e.g. "999") measures 21px
                # with this font (all digits except "1" are 7px wide) - 20px left zero/negative
@@ -59,13 +57,20 @@ _BADGE_W = 22  # badge pixel width: worst-case 3-digit line ID (e.g. "999") meas
 _BADGE_H = 11  # line IDs are digits/letters, whose glyphs all end at row 9 (yOffset=1,
                # height=9 in the source font); the reference VBZ display's own box extends
                # 1px past that floor (row 10), so this matches rather than cropping flush to it
+_BADGE_GAP = 2  # vertical px between one row's badge/destination text and the next row's
+_ROW_PITCH = _BADGE_H + _BADGE_GAP  # 13: gives a 2px gap between color boxes (was 3px at 14)
 _DEST_GAP = 4  # px between the badge's right edge and the destination text
 
 _badges = []  # one dedicated TileGrid per row slot, created lazily (needs if_tall)
 
 
 def _max_rows():
-    return max(1, varinit.if_tall // _ROW_PITCH)
+    # Rows only need a gap *between* them, not a trailing one after the last
+    # row, so "+ _BADGE_GAP" before the floor division (rather than a plain
+    # if_tall // _ROW_PITCH) correctly counts a row that fits using the space
+    # that would otherwise be reserved for a gap past the final row - e.g. a
+    # 64px-tall panel fits 5 rows (5*11 + 4*2 = 63px) this way, not 4.
+    return max(1, (varinit.if_tall + _BADGE_GAP) // _ROW_PITCH)
 
 
 def _ensure_badges():
