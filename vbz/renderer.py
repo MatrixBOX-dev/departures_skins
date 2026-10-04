@@ -110,6 +110,17 @@ def _host_white():
         return (25, 25, 25)
 
 
+def _accent_rgb():
+    # the same global LED tone (amber/yellow/white, per settings["color"]) that
+    # list/scroll/DSA/TfL DLR draw their text in by default - read live so a
+    # brightness/color-theme change takes effect on this skin's next redraw too
+    try:
+        v = varinit.palette[1]
+        return ((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF)
+    except Exception:
+        return (90, 45, 0)
+
+
 _FLOOR = 15   # min output for non-zero channels
 _CEIL  = 90   # max output (what a full 255 becomes)
 
@@ -156,14 +167,15 @@ def _width(text, font_index):
     return total
 
 
-def _draw(text, x, y):
+def _draw(text, x, y, color_index=2):
     # renderstring()'s sys_msg color override only applies to the host's own
     # int-row-bitmask fonts, not string-row fonts like this one, so sys_msg="white"
     # would silently be ignored here and fall through to the shared topbottom
-    # palette's index 1 (the user's global accent color theme, default amber/
-    # yellow) instead. Draw directly, writing "on" pixels to palette index 2
-    # (the app's fixed dimmed white, never touched by that theme) so VBZ text
-    # is always white regardless of the user's chosen accent color.
+    # palette's index 1 (the user's global accent color theme) instead. Draw
+    # directly, writing "on" pixels to the requested topbottom palette index:
+    # 2 (the app's fixed dimmed white) in color mode, to match the per-line
+    # badge colors; 1 (the user's chosen accent LED tone) in regular mode, to
+    # match list/scroll/DSA/TfL DLR's own default text color.
     font = varinit.fonts[_VBZ_FONT_INDEX]
     fontheight = font["fontheight"]
     pixwidth = x
@@ -173,7 +185,7 @@ def _draw(text, x, y):
         for col in range(glyph[0]):
             for row in range(fontheight):
                 bit = glyph[row + 1][col]
-                try: varinit.topbottom[pixwidth + col, row + y] = 2 if bit == "1" else 0
+                try: varinit.topbottom[pixwidth + col, row + y] = color_index if bit == "1" else 0
                 except Exception: pass
         pixwidth += glyph[0]
     return pixwidth
@@ -195,8 +207,18 @@ def _draw_row(i, row, y):
     raw_color = row[5] if len(row) > 5 else ""
     raw_delay = row[6] if len(row) > 6 else ""
 
+    color_mode = int(varinit.settings.get("vbz_color", 1))
+    if color_mode:
+        bg, fg = _parse_color(raw_color)
+        text_color_index = 2  # host dimmed white - matches the per-line badge colors
+    else:
+        # regular mode: no color badges - a black badge background blends into
+        # the shared black canvas, and the line number (like dest/time below)
+        # uses the host's own accent LED tone instead of a per-line color.
+        bg, fg = (0, 0, 0), _accent_rgb()
+        text_color_index = 1  # host accent LED tone, matching list/scroll/DSA/TfL DLR's default
+
     tg = _badges[i]
-    bg, fg = _parse_color(raw_color) if int(varinit.settings.get("vbz_color", 1)) else _finish_color((40, 40, 40), None)
     tg.pixel_shader[0] = bg
     tg.pixel_shader[1] = fg
     tg.bitmap.fill(0)
@@ -223,8 +245,8 @@ def _draw_row(i, row, y):
     while dest and _width(dest, _VBZ_FONT_INDEX) > max_dest_w:
         dest = dest[:-1]
 
-    _draw(dest, dest_x, y)
-    _draw(tail, tail_x, y)
+    _draw(dest, dest_x, y, text_color_index)
+    _draw(tail, tail_x, y, text_color_index)
 
 
 def render():
