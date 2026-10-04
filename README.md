@@ -2,10 +2,11 @@
 This repository contains the "skins", i.e. custom styles, for the /departures app.
 
 So far containing:
+- a generic list mode (large, small and mini font available)
 - the classic SL scroll (Storstockholms Lokaltrafik in Sweden)
-- a generic list mode
 - DSA, a custom three-line version used by WFB and EGB (Westfrankenbahn, Erzgebirgsbahn in Germany)
 - DLR (Docklands Light Railway) within TfL (London, UK)
+- VBZ (Zürich, Switzerland)
 
 To do:
 - clean up the UI
