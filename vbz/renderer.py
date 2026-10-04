@@ -107,20 +107,31 @@ def _host_white():
         v = varinit.palette[2]
         return ((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF)
     except Exception:
-        return (50, 50, 50)
+        return (25, 25, 25)
 
+
+_FLOOR = 15   # min output for non-zero channels
+_CEIL  = 90   # max output (what a full 255 becomes)
 
 def _finish_color(bg, fg):
-    bg = bg or (40, 40, 40)
-    r, g, b = bg
-    is_red = r > 140 and g < 100 and b < 100  # vivid red boxes read better with black text too
-    if _luminance(bg) > 170 or is_red:
-        fg = (0, 0, 0)  # bright or red box background -> force black line ID text
-    else:
-        fg = fg or (255, 255, 255)
-        if fg == (255, 255, 255): fg = _host_white()
-    return bg, fg
+    bg = bg or (25, 25, 25)
 
+    span = _CEIL - _FLOOR
+
+    def _dim_channel(c):
+        if c == 0:
+            return 0
+        return _FLOOR + int((c / 255.0) * span)
+
+    bg = (_dim_channel(bg[0]), _dim_channel(bg[1]), _dim_channel(bg[2]))
+
+    # backgrounds are always dim now, so text is always light - no black-text case
+    fg = fg or (255, 255, 255)
+    if fg == (255, 255, 255):
+        fg = _host_white()
+    else:
+        fg = (_dim_channel(fg[0]), _dim_channel(fg[1]), _dim_channel(fg[2]))
+    return bg, fg
 
 def _parse_color(raw):
     # search.ch format: "bgHex~fgHex~flag" (flag seen but unused here)
