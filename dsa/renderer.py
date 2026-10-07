@@ -355,8 +355,6 @@ def _draw_row(row, row_index):
     line_text = str(row[1]).upper()[:varinit.settings["line_length"] or 8]
     dest_text, time_text, delay_text = row[2], row[3], row[4]
     platform_text = row[5] if len(row) > 5 else ""
-    if not int(varinit.settings["clocktime"]) and not time_text.endswith(varinit.settings["mins"]):
-        time_text += varinit.settings["mins"]
     y = row_index * 12
 
     line_width = _width(line_text, _DSA_FONT_INDEX)
@@ -366,9 +364,12 @@ def _draw_row(row, row_index):
 
     if layout == 1:
         _draw(line_text, 50, y + 3, _DSA_FONT_INDEX)
-        _draw(delay_text, 30, y + 2, _DSA_SMALL_INDEX)
     _draw(time_text, -1, y, _DSA_LARGE_INDEX)
     if layout == 1:
+        # Drawn after time_text (not before) so a wide time string (e.g. a
+        # two-digit hour like "16:21") can't paint over the "+" - renderstring
+        # writes opaque glyph cells, so whatever is drawn last wins.
+        _draw(delay_text, 30, y + 2, _DSA_SMALL_INDEX)
         _draw(dest_text, x_dest + 1, y, _DSA_LARGE_INDEX)
     else:
         _draw(dest_text, _width(time_text, _DSA_LARGE_INDEX) + 2, y + 2, _DSA_SMALL_INDEX)
