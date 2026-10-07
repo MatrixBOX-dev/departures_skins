@@ -7,6 +7,7 @@ So far containing:
 - DSA, a custom three-line version used by WFB and EGB (Westfrankenbahn, Erzgebirgsbahn in Germany)
 - DLR (Docklands Light Railway) within TfL (London, UK)
 - VBZ (Zürich, Switzerland)
+- U-Bahn (Berlin)
 
 To do:
 - clean up the UI
