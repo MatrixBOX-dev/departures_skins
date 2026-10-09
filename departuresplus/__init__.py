@@ -3,7 +3,7 @@ from __main__ import *
 
 _RAW    = "https://raw.githubusercontent.com/jnbp/matrixbox-departures-plus/refs/heads/main/departuresplus/"
 _API    = "https://api.github.com/repos/jnbp/matrixbox-departures-plus/git/trees/main?recursive=1"
-_DIR    = "/DSA_2_0"
+_DIR    = "/departuresplus"
 _MARKER = _DIR + "/.installed"
 
 def _progress(current, total, name):
