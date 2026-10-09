@@ -85,15 +85,25 @@ except:
     window.fill(0)
     display.refresh()
 
+    # Make sure the base target dir exists at the filesystem root.
+    try:
+        os.stat(_DIR)
+    except OSError:
+        os.mkdir(_DIR)
+
     for path, data, mode in downloads:
         parts = path.split("/")
         if len(parts) > 1:
             d = _DIR
             for p in parts[:-1]:
                 d += "/" + p
-                try: os.mkdir(d)
-                except: pass
-        with open(_DIR + "/" + path, mode) as f:
+                try:
+                    os.stat(d)
+                except OSError:
+                    try: os.mkdir(d)
+                    except OSError: pass
+        target = _DIR.rstrip("/") + "/" + path.lstrip("/")
+        with open(target, mode) as f:
             f.write(data)
 
     with open(_MARKER, "w") as f:
@@ -104,4 +114,4 @@ except:
     pprint("Done!", 0, _clearscreen=True)
     microcontroller.reset()
 
-exec(open(_DIR + "/renderer.py").read())
+exec(open(_DIR + "/__init__.py").read())
