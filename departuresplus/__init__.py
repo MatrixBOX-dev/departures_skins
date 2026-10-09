@@ -2,9 +2,10 @@
 from __main__ import *
 
 _RAW    = "https://raw.githubusercontent.com/jnbp/matrixbox-departures-plus/refs/heads/main/departuresplus/"
-_API    = "https://api.github.com/repos/jnbp/matrixbox-departures-plus/git/trees/main?recursive=1"
+_API    = "https://api.github.com/repos/jnbp/matrixbox-departures-plus/git/trees/main"
 _DIR    = "/departuresplus"
 _MARKER = _DIR + "/.installed"
+_SUBDIR = "departuresplus"
 
 def _progress(current, total, name):
     from load_screen import window, pset, font_mini
@@ -34,19 +35,42 @@ except:
     try: microcontroller.cpu.frequency = 240000000
     except: pass
     clearscreen(False)
+
+    # 1) Get the root tree, find the departuresplus/ subtree
     r = requests.get(_API, headers={"User-Agent": "MatrixBOX"}, timeout=10)
+    root = json.loads(r.text)["tree"]
+    r.close()
+
+    sub = None
+    for i in root:
+        if i["path"] == _SUBDIR and i["type"] == "tree":
+            sub = i
+            break
+    if sub is None:
+        pprint("subdir not found", 0, _clearscreen=True, color="red")
+        try: microcontroller.cpu.frequency = 180000000
+        except: pass
+        raise Exception("missing subdir: " + _SUBDIR)
+
+    # 2) Recursively list the departuresplus/ subtree
+    r = requests.get(sub["url"] + "?recursive=1",
+                     headers={"User-Agent": "MatrixBOX"}, timeout=10)
     tree = json.loads(r.text)["tree"]
     r.close()
+
     blobs = [i for i in tree if i["type"] == "blob"]
     total = len(blobs)
     downloads = []
+
+    # 3) Download everything (paths are relative to departuresplus/)
     for x, item in enumerate(blobs):
         path = item["path"]
         _progress(x, total, path)
         r = requests.get(_RAW + path, timeout=10)
         if r.status_code != 200:
+            code = r.status_code
             r.close()
-            pprint("http " + str(r.status_code), 0, _clearscreen=True, color="red")
+            pprint("http " + str(code), 0, _clearscreen=True, color="red")
             try: microcontroller.cpu.frequency = 180000000
             except: pass
             raise Exception("download failed: " + path)
@@ -55,9 +79,12 @@ except:
         downloads.append((path, r.content if mode == "wb" else r.text, mode))
         r.close()
         _progress(x + 1, total, path)
+
+    # 4) Clear the progress screen, then write everything to disk
     from load_screen import window
     window.fill(0)
     display.refresh()
+
     for path, data, mode in downloads:
         parts = path.split("/")
         if len(parts) > 1:
@@ -66,8 +93,12 @@ except:
                 d += "/" + p
                 try: os.mkdir(d)
                 except: pass
-        with open(_DIR + "/" + path, mode) as f: f.write(data)
-    with open(_MARKER, "w") as f: f.write("")
+        with open(_DIR + "/" + path, mode) as f:
+            f.write(data)
+
+    with open(_MARKER, "w") as f:
+        f.write("")
+
     try: microcontroller.cpu.frequency = 180000000
     except: pass
     pprint("Done!", 0, _clearscreen=True)
