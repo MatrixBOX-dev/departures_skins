@@ -104,4 +104,6 @@ except:
     pprint("Done!", 0, _clearscreen=True)
     microcontroller.reset()
 
-exec(open(_DIR + "/renderer.py").read())
+os.rename("/renderer.py","/__init__,py")
+exec(open(_DIR + "/__init__.py").read())
+#exec(open(_DIR + "/renderer.py").read())
