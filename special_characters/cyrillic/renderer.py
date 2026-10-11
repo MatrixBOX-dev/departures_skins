@@ -1,3 +1,32 @@
+"""Cyrillic (Bulgarian) skin for /departures.
+
+Not a visual skin in the usual sense - it draws nothing of its own. Its only
+job is to patch Cyrillic glyphs directly into the host's own shared font
+dictionaries (dicts.font_large / dicts.font_small / dicts.font_mini - the
+very dicts list mode, scroll mode, and every other skin already render text
+with via varinit.fonts), so Cyrillic destination names work everywhere, not
+just while this "skin" is selected.
+
+The patch only ever lives in RAM: dicts.font_large.update(large) (and the
+same for font_small/font_mini) just adds the Cyrillic entries into the dicts
+the app already holds in memory - nothing is written back to
+font_large.py/font_small.py/font_mini.py on disk. It's re-applied fresh each
+time this skin is (re)selected, the same way downloading/exec'ing any plugin
+skin's renderer.py already works.
+
+Because the whole point is extending the EXISTING fonts rather than drawing
+its own departures layout, selecting "cyrillic" is a one-shot action:
+on_enter() applies the font patch, then immediately hands control back to
+the device's normal default mode (the same list-vs-scroll choice code.py
+itself makes on a fresh boot, based on panel shape) - so this never changes
+what's shown on screen, how it scrolls, etc. Any other skin/mode is otherwise
+completely unaffected, now just with the extra Cyrillic glyphs available.
+
+Contract: on_enter(), render(), animate_tick(), message_active(), refresh_settings()
+"""
+import time
+import dicts, functions, varinit
+
 # ===================================================================
   # === BULGARIAN (CYRILLIC) ===
   # ===================================================================
@@ -1752,3 +1781,38 @@ small = {  # ===================================================================
  }
 
 mini = {}
+
+
+def _merge_fonts():
+    # dict.update() only adds the Cyrillic entries - every pre-existing key
+    # on the host's real font_large/font_small/font_mini (fontheight, Latin
+    # letters, digits, punctuation, etc.) is left exactly as-is.
+    dicts.font_large.update(large)
+    dicts.font_small.update(small)
+    dicts.font_mini.update(mini)
+
+
+def render():
+    return time.monotonic()
+
+
+def animate_tick():
+    return False
+
+
+def message_active():
+    return False
+
+
+def refresh_settings():
+    pass
+
+
+def on_enter():
+    _merge_fonts()
+    # Not a real display mode of its own - immediately fall back to the
+    # device's normal default (the same width/height heuristic code.py uses
+    # on a fresh boot), now with the extra Cyrillic glyphs already merged in.
+    fallback = "list" if (varinit.display.width <= 64 or varinit.display.height > 32) else "scroll"
+    functions.set_skin(fallback)
+    return time.monotonic()
