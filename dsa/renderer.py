@@ -3,12 +3,18 @@
 Downloaded on demand and imported by /departures' skin loader. Talks
 directly to Bahn.de / VVO Dresden (not the host's data.t-skylt.se
 pipeline), using its own custom dot-matrix font for line numbers.
+Provider 4 (gtfs.de) is the one exception - see _fetch_departures_gtfsde().
 
-Settings this skin reads (none are registered in the host's settingstxt
-yet, so they all fall back to sane defaults until a web-UI row is added):
+Settings this skin reads (dsa_api_provider/dsa_layout/dsa_summer_time have a
+web-UI row in web.py's dsa_provider_html; dsa_utc_offset doesn't yet, so it
+still falls back to its default until a dedicated field exists):
     dsa_api_provider  - 1: Bahn.de ICE/IC/Regional/SBahn (default)
                          2: Bahn.de, all services
                          3: VVO Dresden (EFA)
+                         4: Germany (gtfs.de), via the host's own
+                            data.t-skylt.se pipeline (country=de,
+                            operator=local) instead of a direct station API -
+                            see _fetch_departures_gtfsde()
     dsa_layout        - 1: line badge + large destination (default)
                          2: destination in small font next to the time
     dsa_utc_offset    - manual UTC offset in hours (default 1)
@@ -17,6 +23,9 @@ Station id: stations[num]["siteid"] must hold an EFA/VBB-style stop id
 (e.g. "de:14522:70048"), not the usual data.t-skylt.se siteid - the
 host's station search doesn't produce these, so it needs to be set
 manually (e.g. via /cmd) until a dedicated text field exists.
+Exception: provider 4 (gtfs.de) uses the host's own data.t-skylt.se siteid
+format instead (whatever search_station()/search_stop?operator=local hands
+back), since that's the id get_departures?operator=local expects.
 
 Contract expected by /departures' skin loader:
     on_enter()        - called once when this skin becomes active
@@ -35,7 +44,7 @@ import time, json
 import displayio
 import varinit, dicts
 from __main__ import requests
-from functions import cls, refresh, renderstring
+from functions import cls, refresh, renderstring, fetch_data
 from varinit import topbottom, fonts
 
 _FONT_PATH = "skins/dsa/custom_font.json"
@@ -229,19 +238,20 @@ def _get_api_request(station_id, api_provider):
 
 def search_station(query):
     """Search German stops via the host's own data.t-skylt.se /search_stop proxy
-    (country=de, operator=vvo or db_trains depending on the active API provider)
-    rather than hitting bahn.de/efa.vvo-online.de directly - "db" looked plausible
-    but actually returns an unscoped nationwide GTFS substring match; db_trains is
-    the real Bahn.de operator code (confirmed against both the live endpoint and
-    the host's own country_and_operators registry in web.py).
+    (country=de, operator=vvo/db_trains/local depending on the active API
+    provider) rather than hitting bahn.de/efa.vvo-online.de directly - "db"
+    looked plausible but actually returns an unscoped nationwide GTFS
+    substring match; db_trains is the real Bahn.de operator code (confirmed
+    against both the live endpoint and the host's own country_and_operators
+    registry in web.py). "local" is that same registry's gtfs.de entry,
+    used for provider 4.
     Returns the same <option> HTML shape host's own /search route builds, and
     populates varinit.datadict[id]=name the same way, so selecting a result
     reuses the host's existing newstation handler as-is."""
     api_provider = int(varinit.settings.get("dsa_api_provider", 1))
-    operator = "vvo" if api_provider == 3 else "db_trains"
+    operator = "vvo" if api_provider == 3 else ("local" if api_provider == 4 else "db_trains")
     datastr = '<option value="0">Search...</option>'
     try:
-        from functions import fetch_data
         raw = fetch_data("data.t-skylt.se", 90, "/search_stop?country=de&operator=" + operator + "&station=" + query)
         data = json.loads(raw)
         for name, sid in sorted(((n, data[n]) for n in data), key=lambda p: p[0]):
@@ -254,10 +264,65 @@ def search_station(query):
 
 
 
+def _fetch_departures_gtfsde(station_id):
+    """Provider 4: route through the host's own data.t-skylt.se pipeline
+    (country=de, operator=local - the "Germany (gtfs.de)" entry in web.py's
+    country_and_operators) instead of talking to a station API directly, the
+    same way the rest of /departures already does for this provider. Reuses
+    the plain-socket fetch_data() helper (not requests/https), so station_id
+    here is a data.t-skylt.se siteid, not an EFA id.
+
+    Response shape, confirmed against gtfsloader.py's departure() (operator
+    "local" is one of the generic GTFS+GTFS-RT operators it serves, loaded
+    from download.gtfs.de/germany/nv_free + realtime.gtfs.de/realtime-free.pb):
+        {"departures": [
+            {"line": {"id": <str>, "transport_mode": <str>},
+             "destination": <str>, "expected": <'YYYY-MM-DDTHH:MM:SS'>,
+             "direction_code": <int>,
+             "deviations": [] if realtime-confirmed else "#",
+             "delay": <int minutes, only present once realtime-confirmed>,
+             "platform": <str, only present when the GTFS stop has one>}, ...],
+         "msg": <str, optional - shown when departures is empty>}
+    No explicit-cancellation field yet - gtfsloader.py doesn't track that for
+    this operator, unlike delay/platform above it does compute internally."""
+    try:
+        raw = fetch_data(host="data.t-skylt.se", port=90,
+                          args="/get_departures?country=de&operator=local&station=" + station_id)
+        data = json.loads(raw)
+    except Exception as e:
+        print("DSA: gtfs.de fetch error:", repr(e))
+        _queue_ticker("DSA: connection error (" + repr(e) + ")")
+        return []
+
+    deps = data.get("departures", []) if isinstance(data, dict) else []
+    if not deps:
+        msg = data.get("msg") if isinstance(data, dict) else None
+        if msg: _queue_ticker("DSA: " + str(msg))
+        return []
+
+    rows = []
+    for dep in deps[:10]:
+        if not isinstance(dep, dict): continue
+        line = str((dep.get("line") or {}).get("id", ""))
+        dest = str(dep.get("destination") or "").strip()
+        expected = str(dep.get("expected", ""))
+        if "T" not in expected or ":" not in expected: continue
+        hour, minute = expected.split("T")[1][0:2], expected.split("T")[1][3:5]
+        try: delay = int(dep.get("delay"))
+        except Exception: delay = None
+        platform_text = str(dep.get("platform") or "")
+        time_text = hour + ":" + minute
+        delay_text = "" if delay is None else ("+" + str(delay) if delay >= 0 else str(delay))
+        rows.append(["0", line, dest, time_text, delay_text, platform_text])
+    return rows
+
+
 def _fetch_departures(num="1"):
     stn = varinit.settings["stations"][num]
     station_id = stn.get("siteid") or "de:14522:70048"
     api_provider = int(varinit.settings.get("dsa_api_provider", 1))
+    if api_provider == 4:
+        return _fetch_departures_gtfsde(station_id)
     host, args = _get_api_request(station_id, api_provider)
     print("DSA: provider", api_provider, "station", station_id, "host", host)
     if not host:
